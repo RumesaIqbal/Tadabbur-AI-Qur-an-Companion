@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
 import { SavedCard, EmptyState } from '../../components';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useFocusEffect } from '@react-navigation/native'; // ✅ add this
 import { supabase } from '../../services/supabase';
 import { API_BASE_URL } from '../../constants/config';
 
@@ -96,6 +97,9 @@ export default function SavedScreen() {
   const [verseDetails, setVerseDetails] = useState<Record<string, VerseDetails>>({});
   const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
 
+  // ------------------------------------------------------------------
+  // Fetch saved verses from backend
+  // ------------------------------------------------------------------
   const fetchSavedVerses = useCallback(async () => {
     try {
       setError(null);
@@ -134,6 +138,9 @@ export default function SavedScreen() {
     }
   }, [searchQuery]);
 
+  // ------------------------------------------------------------------
+  // Apply search filter
+  // ------------------------------------------------------------------
   const applySearch = useCallback((data: SavedVerse[], query: string) => {
     if (!query.trim()) {
       setFilteredVerses(data);
@@ -147,19 +154,33 @@ export default function SavedScreen() {
     setFilteredVerses(filtered);
   }, []);
 
-  useEffect(() => {
-    fetchSavedVerses();
-  }, []);
+  // ------------------------------------------------------------------
+  // Refresh on every focus
+  // ------------------------------------------------------------------
+  useFocusEffect(
+    useCallback(() => {
+      fetchSavedVerses();
+    }, [fetchSavedVerses])
+  );
 
+  // ------------------------------------------------------------------
+  // Re‑apply search when searchQuery or savedVerses changes
+  // ------------------------------------------------------------------
   useEffect(() => {
     applySearch(savedVerses, searchQuery);
   }, [searchQuery, savedVerses, applySearch]);
 
+  // ------------------------------------------------------------------
+  // Pull‑to‑refresh
+  // ------------------------------------------------------------------
   const onRefresh = () => {
     setRefreshing(true);
     fetchSavedVerses();
   };
 
+  // ------------------------------------------------------------------
+  // Delete a saved verse
+  // ------------------------------------------------------------------
   const handleDelete = async (id: string) => {
     Alert.alert(
       'Remove Saved Verse',
@@ -204,6 +225,9 @@ export default function SavedScreen() {
     );
   };
 
+  // ------------------------------------------------------------------
+  // Fetch verse details (translation & context)
+  // ------------------------------------------------------------------
   const fetchVerseDetails = async (verse: SavedVerse) => {
     const { id, surah_number, verse_number } = verse;
     if (verseDetails[id]) return;
@@ -243,6 +267,9 @@ export default function SavedScreen() {
     }
   };
 
+  // ------------------------------------------------------------------
+  // Toggle expansion of a verse card
+  // ------------------------------------------------------------------
   const toggleExpand = (id: string) => {
     if (expandedId === id) {
       setExpandedId(null);
@@ -255,17 +282,19 @@ export default function SavedScreen() {
     }
   };
 
+  // ------------------------------------------------------------------
+  // Keyboard helpers
+  // ------------------------------------------------------------------
   const dismissKeyboard = () => Keyboard.dismiss();
-
-  const handleSearchSubmit = () => {
-    dismissKeyboard();
-  };
-
+  const handleSearchSubmit = () => dismissKeyboard();
   const clearSearch = () => {
     setSearchQuery('');
     dismissKeyboard();
   };
 
+  // ------------------------------------------------------------------
+  // Render item (memoized)
+  // ------------------------------------------------------------------
   const renderItem = useCallback(
     ({ item, index }: { item: SavedVerse; index: number }) => {
       const details = verseDetails[item.id];
@@ -288,6 +317,9 @@ export default function SavedScreen() {
     [isGrid, expandedId, verseDetails, loadingDetails, toggleExpand, handleDelete]
   );
 
+  // ------------------------------------------------------------------
+  // Loading / error states
+  // ------------------------------------------------------------------
   if (loading) {
     return (
       <View style={[styles.container, styles.center]}>
@@ -309,6 +341,9 @@ export default function SavedScreen() {
     );
   }
 
+  // ------------------------------------------------------------------
+  // Main render
+  // ------------------------------------------------------------------
   return (
     <TouchableWithoutFeedback onPress={dismissKeyboard}>
       <LinearGradient
@@ -401,12 +436,15 @@ export default function SavedScreen() {
   );
 }
 
+// ------------------------------------------------------------------
+// Styles (unchanged)
+// ------------------------------------------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
-    backgroundColor: '#0a1a1a', // ✅ Fixed: dark background for loading/error states
+    backgroundColor: '#0a1a1a',
   },
   center: {
     justifyContent: 'center',

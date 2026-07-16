@@ -21,12 +21,12 @@ import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { colors, spacing, typography } from '../../theme';
 import { supabase } from '../../services/supabase';
-
+import { API_BASE_URL } from '../../constants/config';
 // -------------------------------------------------------------------
 // Backend configuration
 // -------------------------------------------------------------------
-const BACKEND_BASE_URL = 'tadabbur-backend-9mi4w9n10-rumesa-iqbals-projects.vercel.app';
-const API_URL = `${BACKEND_BASE_URL}/api/chat`;
+const BACKEND_BASE_URL = API_BASE_URL; // change to your backend IP or domain
+const API_URL = `${API_BASE_URL}/api/chat`;
 
 async function getAuthToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();

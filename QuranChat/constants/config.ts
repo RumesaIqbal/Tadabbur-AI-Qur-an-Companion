@@ -1,1 +1,1 @@
-export const API_BASE_URL = 'tadabbur-backend-9mi4w9n10-rumesa-iqbals-projects.vercel.app'; // change to your backend IP
+export const API_BASE_URL = 'https://tadabbur-backend-kappa.vercel.app'; // change to your backend IP

@@ -22,7 +22,7 @@ import { supabase } from '../../services/supabase';
 
 const { width } = Dimensions.get('window');
 
-const BACKEND_BASE_URL = 'http://192.168.56.1:5001';
+const BACKEND_BASE_URL = 'tadabbur-backend-9mi4w9n10-rumesa-iqbals-projects.vercel.app';
 
 async function getAuthToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();

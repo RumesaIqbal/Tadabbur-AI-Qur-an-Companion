@@ -25,7 +25,7 @@ import { supabase } from '../../services/supabase';
 // -------------------------------------------------------------------
 // Backend configuration
 // -------------------------------------------------------------------
-const BACKEND_BASE_URL = 'http://192.168.100.131:5001';
+const BACKEND_BASE_URL = 'tadabbur-backend-9mi4w9n10-rumesa-iqbals-projects.vercel.app';
 const API_URL = `${BACKEND_BASE_URL}/api/chat`;
 
 async function getAuthToken(): Promise<string | null> {

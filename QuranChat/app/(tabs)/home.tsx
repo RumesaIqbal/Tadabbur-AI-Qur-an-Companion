@@ -569,14 +569,7 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <SearchBar
-            placeholder="Ask anything about the Qur'an"
-            style={styles.searchBar}
-            inputStyle={styles.searchInput}
-            placeholderTextColor="#6B7280"
-            iconColor="#D4AF37"
-          />
-
+         
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Daily Verse</Text>
           </View>

@@ -1,6 +1,6 @@
 // app/_layout.tsx
 import { useEffect } from 'react';
-import { View, StyleSheet, Text } from 'react-native'; // ensure Text is imported if used
+import { View, StyleSheet } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -20,6 +20,11 @@ export default function RootLayout() {
 
   useEffect(() => {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      // 🔥 Ignore the initial session event – the splash screen handles navigation
+      if (event === 'INITIAL_SESSION') {
+        return;
+      }
+
       const inAuthGroup = segments[0] === 'login' || segments[0] === 'auth';
       if (!session && !inAuthGroup) {
         router.replace('/login');
@@ -28,14 +33,8 @@ export default function RootLayout() {
       }
     });
 
-    supabase.auth.getSession().then(({ data }) => {
-      const inAuthGroup = segments[0] === 'login' || segments[0] === 'auth';
-      if (!data.session && !inAuthGroup) {
-        router.replace('/login');
-      } else if (data.session && inAuthGroup) {
-        router.replace('/(tabs)/home');
-      }
-    });
+    // ❌ Remove the immediate session check – it was causing premature navigation
+    // supabase.auth.getSession().then(...)
 
     return () => listener?.subscription.unsubscribe();
   }, []);

@@ -1,19 +1,30 @@
-// app/index.tsx
 import { useEffect } from 'react';
-import { View, StyleSheet, Image, StatusBar } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  Image,
+  StatusBar,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Text, ActivityIndicator } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { colors, spacing, typography } from '../theme';
+import { supabase } from '../services/supabase';
 
 export default function SplashScreen() {
   const router = useRouter();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      router.replace('/login');
-    }, 2500);
+    const timer = setTimeout(async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session) {
+        router.replace('/(tabs)/home');
+      } else {
+        router.replace('/login');
+      }
+    }, 1500); // 3 seconds – clearly visible
+
     return () => clearTimeout(timer);
   }, []);
 
@@ -26,7 +37,7 @@ export default function SplashScreen() {
     >
       <StatusBar barStyle="light-content" backgroundColor="#0a1a1a" />
 
-      <Animated.View entering={FadeIn.duration(1000)} style={styles.content}>
+      <View style={styles.content}>
         <View style={styles.logoCircle}>
           <Image
             source={require('../assets/images/logo.png')}
@@ -35,10 +46,7 @@ export default function SplashScreen() {
           />
         </View>
 
-        <Animated.Text entering={SlideInDown.delay(300)} style={styles.title}>
-          Tadabbur
-        </Animated.Text>
-
+        <Text style={styles.title}>Tadabbur</Text>
         <Text style={styles.subtitle}>Reflection upon the Qur'an</Text>
 
         <ActivityIndicator
@@ -47,7 +55,9 @@ export default function SplashScreen() {
           size="large"
           style={styles.loader}
         />
-      </Animated.View>
+      </View>
+
+      <Text style={styles.version}>Version 1.0.0</Text>
     </LinearGradient>
   );
 }
@@ -57,15 +67,19 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: spacing.lg,
   },
   content: {
     alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    marginTop: -40,
   },
   logoCircle: {
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: '#1a2a2a', // same as login page
+    backgroundColor: '#1a2a2a',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
@@ -101,5 +115,13 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: spacing.md,
+  },
+  version: {
+    position: 'absolute',
+    bottom: spacing.xl,
+    color: '#4A5568',
+    fontSize: typography.fontSize.sm,
+    fontWeight: '400',
+    letterSpacing: 0.3,
   },
 });

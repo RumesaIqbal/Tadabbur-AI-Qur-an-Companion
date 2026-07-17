@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -14,7 +14,6 @@ import { Text, Card, List, Divider } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import * as Location from 'expo-location';
 
 import { colors, spacing } from '../../theme';
 import { UserAvatar } from '../../components';
@@ -39,22 +38,11 @@ export default function ProfileScreen() {
   const [userEmail, setUserEmail] = useState('user@example.com');
 
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<'text' | 'qibla'>('text');
   const [modalTitle, setModalTitle] = useState('');
   const [modalContent, setModalContent] = useState('');
 
-  const [qiblaHeading, setQiblaHeading] = useState<number | null>(null);
-  const [qiblaBearing, setQiblaBearing] = useState<number | null>(null);
-  const [qiblaLocationError, setQiblaLocationError] = useState<string | null>(null);
-  const headingSubscription = useRef<any>(null);
-
   useEffect(() => {
     fetchUserProfile();
-    return () => {
-      if (headingSubscription.current) {
-        headingSubscription.current.remove();
-      }
-    };
   }, []);
 
   async function fetchUserProfile() {
@@ -107,72 +95,9 @@ export default function ProfileScreen() {
   };
 
   const showTextModal = (title: string, content: string) => {
-    setModalType('text');
     setModalTitle(title);
     setModalContent(content);
     setModalVisible(true);
-  };
-
-  function computeQiblaBearing(lat: number, lon: number): number {
-    const latMecca = 21.4225;
-    const lonMecca = 39.8262;
-    const φ1 = (lat * Math.PI) / 180;
-    const φ2 = (latMecca * Math.PI) / 180;
-    const Δλ = ((lonMecca - lon) * Math.PI) / 180;
-    const x = Math.cos(φ2) * Math.sin(Δλ);
-    const y = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-    let bearing = (Math.atan2(x, y) * 180) / Math.PI;
-    bearing = (bearing + 360) % 360;
-    return bearing;
-  }
-
-  async function openQiblaModal() {
-    setModalType('qibla');
-    setModalVisible(true);
-    setQiblaHeading(null);
-    setQiblaBearing(null);
-    setQiblaLocationError(null);
-
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setQiblaLocationError('Location permission is required to determine Qibla direction.');
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({});
-      const { latitude, longitude } = location.coords;
-      const bearing = computeQiblaBearing(latitude, longitude);
-      setQiblaBearing(bearing);
-
-      headingSubscription.current = await Location.watchHeadingAsync((headingData) => {
-        if (headingData.trueHeading !== -1) {
-          setQiblaHeading(headingData.trueHeading);
-        } else if (headingData.magneticHeading !== -1) {
-          setQiblaHeading(headingData.magneticHeading);
-        }
-      });
-    } catch (error) {
-      console.error('Qibla setup error:', error);
-      setQiblaLocationError('Failed to access location or sensors.');
-    }
-  }
-
-  function closeQiblaModal() {
-    if (headingSubscription.current) {
-      headingSubscription.current.remove();
-      headingSubscription.current = null;
-    }
-    setModalVisible(false);
-    setQiblaHeading(null);
-    setQiblaBearing(null);
-  }
-
-  const getNeedleAngle = (): number => {
-    if (qiblaHeading === null || qiblaBearing === null) return 0;
-    let angle = qiblaBearing - qiblaHeading;
-    angle = (angle + 360) % 360;
-    return angle;
   };
 
   if (loading) {
@@ -200,7 +125,6 @@ export default function ProfileScreen() {
           style={styles.headerGlow}
         />
         <View style={styles.header}>
-          {/* ✅ Proper Arabic with diacritics */}
           <Text style={styles.arabicHeader}>بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ</Text>
           <UserAvatar size={90} name={userName} />
           <Text style={styles.userName}>{userName}</Text>
@@ -236,16 +160,6 @@ export default function ProfileScreen() {
                   "Qur'an Chat is an AI-powered assistant designed to help you explore, understand, and connect with the Qur'an. Ask any question about verses, themes, or context, and receive thoughtful answers rooted in Islamic scholarship. This app is a companion for your spiritual journey."
                 )
               }
-            />
-            <Divider style={styles.dividerGold} />
-            <List.Item
-              title="Qibla Direction"
-              description="Find direction to Kaaba"
-              descriptionStyle={styles.listDescription}
-              titleStyle={styles.listTitle}
-              left={() => <List.Icon icon="compass-outline" color="#D4AF37" />}
-              right={() => <List.Icon icon="chevron-right" color="#6B7280" />}
-              onPress={openQiblaModal}
             />
             <Divider style={styles.dividerGold} />
             <List.Item
@@ -309,121 +223,21 @@ export default function ProfileScreen() {
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => {
-          if (modalType === 'qibla') {
-            closeQiblaModal();
-          } else {
-            setModalVisible(false);
-          }
-        }}
+        onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContainer, styles.islamicCard]}>
-            {modalType === 'text' ? (
-              <>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{modalTitle}</Text>
-                  <TouchableOpacity
-                    onPress={() => setModalVisible(false)}
-                    style={styles.closeButton}
-                  >
-                    <Ionicons name="close" size={28} color="#D4AF37" />
-                  </TouchableOpacity>
-                </View>
-                <Divider style={styles.modalDivider} />
-                <Text style={styles.modalContent}>{modalContent}</Text>
-              </>
-            ) : (
-              <>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Qibla Direction</Text>
-                  <TouchableOpacity onPress={closeQiblaModal} style={styles.closeButton}>
-                    <Ionicons name="close" size={28} color="#D4AF37" />
-                  </TouchableOpacity>
-                </View>
-                <Divider style={styles.modalDivider} />
-                {qiblaLocationError ? (
-                  <View style={styles.qiblaErrorContainer}>
-                    <Ionicons name="alert-circle-outline" size={40} color="#EF4444" />
-                    <Text style={styles.qiblaErrorText}>{qiblaLocationError}</Text>
-                    <TouchableOpacity
-                      style={styles.qiblaRetryButton}
-                      onPress={openQiblaModal}
-                    >
-                      <Text style={styles.qiblaRetryText}>Retry</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : qiblaHeading === null || qiblaBearing === null ? (
-                  <View style={styles.qiblaLoadingContainer}>
-                    <ActivityIndicator size="large" color="#D4AF37" />
-                    <Text style={styles.qiblaLoadingText}>Initializing...</Text>
-                  </View>
-                ) : (
-                  <View style={styles.qiblaContainer}>
-                    <View style={styles.compassWrapper}>
-                      <View style={styles.compassCircle}>
-                        <Text style={[styles.cardinal, { top: 0, left: '50%', transform: [{ translateX: -8 }] }]}>N</Text>
-                        <Text style={[styles.cardinal, { bottom: 0, left: '50%', transform: [{ translateX: -8 }] }]}>S</Text>
-                        <Text style={[styles.cardinal, { left: 0, top: '50%', transform: [{ translateY: -8 }] }]}>W</Text>
-                        <Text style={[styles.cardinal, { right: 0, top: '50%', transform: [{ translateY: -8 }] }]}>E</Text>
-                        {Array.from({ length: 36 }).map((_, i) => {
-                          const angle = i * 10;
-                          const isMajor = angle % 30 === 0;
-                          return (
-                            <View
-                              key={i}
-                              style={[
-                                styles.tick,
-                                {
-                                  transform: [
-                                    { rotate: `${angle}deg` },
-                                    { translateY: -70 },
-                                  ],
-                                  height: isMajor ? 12 : 6,
-                                  width: isMajor ? 3 : 2,
-                                  backgroundColor: isMajor ? '#1F2937' : '#9CA3AF',
-                                },
-                              ]}
-                            />
-                          );
-                        })}
-                        <View style={styles.forwardMarker}>
-                          <Ionicons name="caret-up" size={20} color="#EF4444" />
-                        </View>
-                        <View
-                          style={[
-                            styles.needleContainer,
-                            {
-                              transform: [{ rotate: `${getNeedleAngle()}deg` }],
-                            },
-                          ]}
-                        >
-                          <View style={styles.needle}>
-                            <View style={styles.needleTip} />
-                            <View style={styles.needleShaft} />
-                          </View>
-                          <Text style={styles.needleLabel}>Qibla</Text>
-                        </View>
-                        <View style={styles.kaabaIcon}>
-                          <Text style={{ fontSize: 36 }}>🕋</Text>
-                        </View>
-                      </View>
-                    </View>
-                    <View style={styles.qiblaInfo}>
-                      <Text style={styles.qiblaBearingText}>
-                        Bearing: {Math.round(qiblaBearing)}° from North
-                      </Text>
-                      <Text style={styles.qiblaHeadingText}>
-                        Device Heading: {Math.round(qiblaHeading)}°
-                      </Text>
-                      <Text style={styles.qiblaHint}>
-                        Rotate your phone until the <Text style={{ fontWeight: 'bold', color: '#D4AF37' }}>gold arrow</Text> points to the <Text style={{ color: '#EF4444' }}>red ▲</Text> at the top.
-                      </Text>
-                    </View>
-                  </View>
-                )}
-              </>
-            )}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{modalTitle}</Text>
+              <TouchableOpacity
+                onPress={() => setModalVisible(false)}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={28} color="#D4AF37" />
+              </TouchableOpacity>
+            </View>
+            <Divider style={styles.modalDivider} />
+            <Text style={styles.modalContent}>{modalContent}</Text>
           </View>
         </View>
       </Modal>
@@ -467,11 +281,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
   },
-  // ✅ Bismillah with proper diacritics and calligraphic style
   arabicHeader: {
     fontSize: 30,
     color: '#D4AF37',
-    fontFamily: 'serif',  // good for Arabic with diacritics
+    fontFamily: 'serif',
     fontWeight: '700',
     marginBottom: spacing.md,
     letterSpacing: 2,
@@ -649,162 +462,5 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     paddingBottom: spacing.sm,
     fontWeight: '400',
-  },
-  qiblaErrorContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  qiblaErrorText: {
-    fontSize: 16,
-    color: '#EF4444',
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  qiblaRetryButton: {
-    backgroundColor: '#D4AF37',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: 20,
-  },
-  qiblaRetryText: {
-    color: '#0a1a1a',
-    fontWeight: '600',
-  },
-  qiblaLoadingContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  qiblaLoadingText: {
-    marginTop: spacing.sm,
-    fontSize: 16,
-    color: '#B8D4D0',
-  },
-  qiblaContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-  },
-  compassWrapper: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: spacing.md,
-  },
-  compassCircle: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: '#2a3a3a',
-    borderWidth: 2,
-    borderColor: '#D4AF37',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  cardinal: {
-    position: 'absolute',
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#D4AF37',
-  },
-  tick: {
-    position: 'absolute',
-    borderRadius: 1,
-    backgroundColor: '#9CA3AF',
-    top: '50%',
-    left: '50%',
-    marginLeft: -1,
-    marginTop: -1,
-    transform: [{ translateY: -70 }],
-  },
-  forwardMarker: {
-    position: 'absolute',
-    top: -12,
-    left: '50%',
-    transform: [{ translateX: -10 }],
-    zIndex: 10,
-  },
-  needleContainer: {
-    position: 'absolute',
-    width: 60,
-    height: 100,
-    alignItems: 'center',
-    justifyContent: 'center',
-    top: '50%',
-    left: '50%',
-    marginLeft: -30,
-    marginTop: -50,
-    zIndex: 5,
-  },
-  needle: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 60,
-    height: 100,
-  },
-  needleTip: {
-    width: 0,
-    height: 0,
-    backgroundColor: 'transparent',
-    borderStyle: 'solid',
-    borderLeftWidth: 12,
-    borderRightWidth: 12,
-    borderBottomWidth: 24,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#D4AF37',
-    transform: [{ rotate: '0deg' }],
-    marginBottom: -2,
-  },
-  needleShaft: {
-    width: 6,
-    height: 70,
-    backgroundColor: '#D4AF37',
-    borderRadius: 3,
-    marginTop: -2,
-  },
-  needleLabel: {
-    position: 'absolute',
-    bottom: -20,
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#D4AF37',
-    backgroundColor: 'rgba(26,42,42,0.9)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  kaabaIcon: {
-    position: 'absolute',
-    width: 50,
-    height: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 25,
-    backgroundColor: 'rgba(26,42,42,0.9)',
-    zIndex: 6,
-  },
-  qiblaInfo: {
-    marginTop: spacing.md,
-    alignItems: 'center',
-    width: '100%',
-  },
-  qiblaBearingText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#D4AF37',
-  },
-  qiblaHeadingText: {
-    fontSize: 16,
-    color: '#B8D4D0',
-    marginTop: 4,
-  },
-  qiblaHint: {
-    fontSize: 15,
-    color: '#B8D4D0',
-    marginTop: spacing.sm,
-    textAlign: 'center',
-    paddingHorizontal: spacing.md,
-    lineHeight: 22,
   },
 });

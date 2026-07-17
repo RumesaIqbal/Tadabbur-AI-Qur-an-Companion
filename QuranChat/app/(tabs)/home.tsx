@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,24 +9,31 @@ import {
   Modal,
   RefreshControl,
   ActivityIndicator,
-  LayoutAnimation,
   Alert,
 } from 'react-native';
-import { Text, FAB, Surface } from 'react-native-paper';
+import { Text, FAB } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { SafeAreaView } from 'react-native-safe-area-context'; // ✅ added
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, typography } from '../../theme';
 import { SearchBar, DailyVerseCard } from '../../components';
 import { supabase } from '../../services/supabase';
 import { API_BASE_URL } from '../../constants/config';
 
-// ---------- Helper: get JWT token ----------
+// ---------- Helper ----------
 async function getAuthToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token || null;
+}
+
+// Helper: convert 24h to 12h with AM/PM
+function formatTimeToAMPM(time24: string): string {
+  const [hours, minutes] = time24.split(':').map(Number);
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 || 12;
+  return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
 }
 
 // ---------- Types ----------
@@ -59,10 +66,8 @@ interface PrayerTimings {
   nextTime: string;
 }
 
-// The five obligatory prayers
 const OBLIGATORY_PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
 
-// ---------- Component ----------
 export default function HomeScreen() {
   const router = useRouter();
   const [savedVerses, setSavedVerses] = useState<SavedVerse[]>([]);
@@ -78,7 +83,14 @@ export default function HomeScreen() {
   const [prayerData, setPrayerData] = useState<PrayerTimings | null>(null);
   const [loadingPrayer, setLoadingPrayer] = useState(false);
 
-  // Modal state for saved verse details
+  // Qibla
+  const [qiblaModalVisible, setQiblaModalVisible] = useState(false);
+  const [qiblaHeading, setQiblaHeading] = useState<number | null>(null);
+  const [qiblaBearing, setQiblaBearing] = useState<number | null>(null);
+  const [qiblaLocationError, setQiblaLocationError] = useState<string | null>(null);
+  const headingSubscription = useRef<any>(null);
+
+  // Saved verse details modal
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedVerse, setSelectedVerse] = useState<SavedVerse | null>(null);
   const [verseDetails, setVerseDetails] = useState<VerseDetails | null>(null);
@@ -129,7 +141,6 @@ export default function HomeScreen() {
   const fetchPrayerTimings = async () => {
     try {
       setLoadingPrayer(true);
-      // Get location
       let latitude = 24.8607;
       let longitude = 67.0011;
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -158,9 +169,76 @@ export default function HomeScreen() {
     }
   };
 
+  // ---------- Qibla ----------
+  function computeQiblaBearing(lat: number, lon: number): number {
+    const latMecca = 21.4225;
+    const lonMecca = 39.8262;
+    const φ1 = (lat * Math.PI) / 180;
+    const φ2 = (latMecca * Math.PI) / 180;
+    const Δλ = ((lonMecca - lon) * Math.PI) / 180;
+    const x = Math.cos(φ2) * Math.sin(Δλ);
+    const y = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    let bearing = (Math.atan2(x, y) * 180) / Math.PI;
+    bearing = (bearing + 360) % 360;
+    return bearing;
+  }
+
+  async function openQiblaModal() {
+    setQiblaModalVisible(true);
+    setQiblaHeading(null);
+    setQiblaBearing(null);
+    setQiblaLocationError(null);
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setQiblaLocationError('Location permission is required to determine Qibla direction.');
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+      const bearing = computeQiblaBearing(latitude, longitude);
+      setQiblaBearing(bearing);
+
+      headingSubscription.current = await Location.watchHeadingAsync((headingData) => {
+        if (headingData.trueHeading !== -1) {
+          setQiblaHeading(headingData.trueHeading);
+        } else if (headingData.magneticHeading !== -1) {
+          setQiblaHeading(headingData.magneticHeading);
+        }
+      });
+    } catch (error) {
+      console.error('Qibla setup error:', error);
+      setQiblaLocationError('Failed to access location or sensors.');
+    }
+  }
+
+  function closeQiblaModal() {
+    if (headingSubscription.current) {
+      headingSubscription.current.remove();
+      headingSubscription.current = null;
+    }
+    setQiblaModalVisible(false);
+    setQiblaHeading(null);
+    setQiblaBearing(null);
+  }
+
+  const getNeedleAngle = (): number => {
+    if (qiblaHeading === null || qiblaBearing === null) return 0;
+    let angle = qiblaBearing - qiblaHeading;
+    angle = (angle + 360) % 360;
+    return angle;
+  };
+
   useEffect(() => {
     fetchDailyVerse();
     fetchSavedVerses();
+    return () => {
+      if (headingSubscription.current) {
+        headingSubscription.current.remove();
+      }
+    };
   }, []);
 
   const onRefresh = () => {
@@ -169,7 +247,7 @@ export default function HomeScreen() {
     fetchSavedVerses();
   };
 
-  // ---------- Fetch Verse Details (translation + context) ----------
+  // ---------- Fetch Verse Details ----------
   const fetchVerseDetails = async (verse: SavedVerse) => {
     setLoadingDetails(true);
     try {
@@ -206,7 +284,6 @@ export default function HomeScreen() {
     }
   };
 
-  // ---------- Open Saved Verse Modal ----------
   const openVerseModal = (verse: SavedVerse) => {
     setSelectedVerse(verse);
     setVerseDetails(null);
@@ -220,7 +297,6 @@ export default function HomeScreen() {
     setVerseDetails(null);
   };
 
-  // ---------- Helpers ----------
   const formatReference = (surah: number, verse: number) => `${surah}:${verse}`;
 
   function timeAgo(dateString: string): string {
@@ -236,9 +312,8 @@ export default function HomeScreen() {
     return new Date(dateString).toLocaleDateString();
   }
 
-  // ---------- Render Prayer Modal ----------
+  // ---------- Render Prayer Modal (with AM/PM) ----------
   const renderPrayerModal = () => {
-    // Filter only the 5 obligatory prayers
     const filteredTimings = prayerData
       ? Object.fromEntries(
           Object.entries(prayerData.timings).filter(([name]) =>
@@ -247,10 +322,21 @@ export default function HomeScreen() {
         )
       : {};
 
-    // Determine next prayer among the filtered ones
-    let nextPrayerName = prayerData?.nextPrayer || 'Fajr';
-    if (!OBLIGATORY_PRAYERS.includes(nextPrayerName)) {
-      nextPrayerName = 'Fajr'; // fallback
+    // Compute next obligatory prayer from filtered timings
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    let nextPrayerName = 'Fajr';
+    let smallestDiff = Infinity;
+    for (const [name, time] of Object.entries(filteredTimings)) {
+      const [hours, minutes] = time.split(':').map(Number);
+      const totalMinutes = hours * 60 + minutes;
+      if (totalMinutes > currentMinutes) {
+        const diff = totalMinutes - currentMinutes;
+        if (diff < smallestDiff) {
+          smallestDiff = diff;
+          nextPrayerName = name;
+        }
+      }
     }
 
     return (
@@ -260,22 +346,23 @@ export default function HomeScreen() {
         visible={prayerModalVisible}
         onRequestClose={() => setPrayerModalVisible(false)}
       >
-        <View style={styles.prayerModalOverlay}>
+        <View style={styles.modalOverlay}>
           <LinearGradient
             colors={['#0c1a2b', '#142b44', '#1a3a5a']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.prayerModalContainer}
+            style={styles.locationModalContainer}
           >
-            <View style={styles.prayerModalHeader}>
-              <Text style={styles.prayerModalTitle}>🕌 Prayer Times</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.locationModalTitle}>🕌 Prayer Times</Text>
               <TouchableOpacity
                 onPress={() => setPrayerModalVisible(false)}
-                style={styles.prayerModalClose}
+                style={styles.closeButton}
               >
                 <Ionicons name="close" size={28} color="#F5D76E" />
               </TouchableOpacity>
             </View>
+            <View style={styles.modalDivider} />
 
             {loadingPrayer ? (
               <View style={styles.modalLoading}>
@@ -284,10 +371,11 @@ export default function HomeScreen() {
               </View>
             ) : prayerData ? (
               <>
-                <Text style={styles.prayerDate}>{prayerData.date}</Text>
+                <Text style={styles.locationDate}>{prayerData.date}</Text>
                 <View style={styles.prayerList}>
                   {Object.entries(filteredTimings).map(([name, time]) => {
                     const isNext = name === nextPrayerName;
+                    const displayTime = formatTimeToAMPM(time);
                     return (
                       <View
                         key={name}
@@ -297,7 +385,7 @@ export default function HomeScreen() {
                           {name}
                         </Text>
                         <Text style={[styles.prayerTime, isNext && styles.prayerTimeNext]}>
-                          {time}
+                          {displayTime}
                         </Text>
                         {isNext && (
                           <View style={styles.nextBadge}>
@@ -311,6 +399,116 @@ export default function HomeScreen() {
               </>
             ) : (
               <Text style={styles.errorText}>Could not load prayer times.</Text>
+            )}
+          </LinearGradient>
+        </View>
+      </Modal>
+    );
+  };
+
+  // ---------- Render Qibla Modal ----------
+  const renderQiblaModal = () => {
+    return (
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={qiblaModalVisible}
+        onRequestClose={closeQiblaModal}
+      >
+        <View style={styles.modalOverlay}>
+          <LinearGradient
+            colors={['#0c1a2b', '#142b44', '#1a3a5a']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.locationModalContainer}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.locationModalTitle}>Qibla Direction</Text>
+              <TouchableOpacity onPress={closeQiblaModal} style={styles.closeButton}>
+                <Ionicons name="close" size={28} color="#F5D76E" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalDivider} />
+
+            {qiblaLocationError ? (
+              <View style={styles.qiblaErrorContainer}>
+                <Ionicons name="alert-circle-outline" size={40} color="#EF4444" />
+                <Text style={styles.qiblaErrorText}>{qiblaLocationError}</Text>
+                <TouchableOpacity
+                  style={styles.qiblaRetryButton}
+                  onPress={openQiblaModal}
+                >
+                  <Text style={styles.qiblaRetryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : qiblaHeading === null || qiblaBearing === null ? (
+              <View style={styles.qiblaLoadingContainer}>
+                <ActivityIndicator size="large" color="#F5D76E" />
+                <Text style={styles.qiblaLoadingText}>Initializing...</Text>
+              </View>
+            ) : (
+              <View style={styles.qiblaContainer}>
+                <View style={styles.compassWrapper}>
+                  <View style={styles.compassCircle}>
+                    <Text style={[styles.cardinal, { top: 0, left: '50%', transform: [{ translateX: -8 }] }]}>N</Text>
+                    <Text style={[styles.cardinal, { bottom: 0, left: '50%', transform: [{ translateX: -8 }] }]}>S</Text>
+                    <Text style={[styles.cardinal, { left: 0, top: '50%', transform: [{ translateY: -8 }] }]}>W</Text>
+                    <Text style={[styles.cardinal, { right: 0, top: '50%', transform: [{ translateY: -8 }] }]}>E</Text>
+                    {Array.from({ length: 36 }).map((_, i) => {
+                      const angle = i * 10;
+                      const isMajor = angle % 30 === 0;
+                      return (
+                        <View
+                          key={i}
+                          style={[
+                            styles.tick,
+                            {
+                              transform: [
+                                { rotate: `${angle}deg` },
+                                { translateY: -70 },
+                              ],
+                              height: isMajor ? 12 : 6,
+                              width: isMajor ? 3 : 2,
+                              backgroundColor: isMajor ? '#1F2937' : '#9CA3AF',
+                            },
+                          ]}
+                        />
+                      );
+                    })}
+                    <View style={styles.forwardMarker}>
+                      <Ionicons name="caret-up" size={20} color="#EF4444" />
+                    </View>
+                    <View
+                      style={[
+                        styles.needleContainer,
+                        {
+                          transform: [{ rotate: `${getNeedleAngle()}deg` }],
+                        },
+                      ]}
+                    >
+                      <View style={styles.needle}>
+                        <View style={styles.needleTip} />
+                        <View style={styles.needleShaft} />
+                      </View>
+                      <Text style={styles.needleLabel}>Qibla</Text>
+                    </View>
+                    <View style={styles.kaabaIcon}>
+                      <Text style={{ fontSize: 36 }}>🕋</Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.qiblaInfo}>
+                  <Text style={styles.qiblaBearingText}>
+                    Bearing: {Math.round(qiblaBearing)}° from North
+                  </Text>
+                  <Text style={styles.qiblaHeadingText}>
+                    Device Heading: {Math.round(qiblaHeading)}°
+                  </Text>
+                  <Text style={styles.qiblaHint}>
+                    Rotate your phone until the <Text style={{ fontWeight: 'bold', color: '#F5D76E' }}>gold arrow</Text> points to the <Text style={{ color: '#EF4444' }}>red ▲</Text> at the top.
+                  </Text>
+                </View>
+              </View>
             )}
           </LinearGradient>
         </View>
@@ -340,7 +538,6 @@ export default function HomeScreen() {
             />
           }
         >
-          {/* Header with Logo, App Name, and Prayer Button */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.headerLogoCircle}>
@@ -354,8 +551,16 @@ export default function HomeScreen() {
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity
+                onPress={openQiblaModal}
+                style={styles.headerIconButton}
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="compass-outline" size={28} color="#D4AF37" />
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={fetchPrayerTimings}
-                style={styles.prayerButton}
+                style={styles.headerIconButton}
                 activeOpacity={0.7}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
@@ -364,7 +569,6 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* Search Bar */}
           <SearchBar
             placeholder="Ask anything about the Qur'an"
             style={styles.searchBar}
@@ -373,7 +577,6 @@ export default function HomeScreen() {
             iconColor="#D4AF37"
           />
 
-          {/* Daily Verse */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Daily Verse</Text>
           </View>
@@ -395,7 +598,6 @@ export default function HomeScreen() {
             <Text style={styles.errorText}>Could not load daily verse</Text>
           )}
 
-          {/* Recently Saved Verses */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recently Saved Verses</Text>
             <TouchableOpacity onPress={() => router.push('/saved')}>
@@ -408,13 +610,13 @@ export default function HomeScreen() {
               <ActivityIndicator size="large" color="#D4AF37" />
             </View>
           ) : savedVerses.length === 0 ? (
-            <Surface style={styles.emptyCard}>
+            <View style={styles.emptyCard}>
               <Ionicons name="bookmark-outline" size={40} color="#D4AF37" />
               <Text style={styles.emptyText}>No verses saved yet</Text>
               <Text style={styles.emptySubText}>
                 Start saving verses from your chat
               </Text>
-            </Surface>
+            </View>
           ) : (
             savedVerses.map((verse) => (
               <TouchableOpacity
@@ -440,7 +642,6 @@ export default function HomeScreen() {
           <Text style={styles.version}>Tadabbur v1.0.0</Text>
         </ScrollView>
 
-        {/* FAB */}
         <FAB
           style={styles.fab}
           icon="plus"
@@ -458,7 +659,7 @@ export default function HomeScreen() {
           onRequestClose={closeModal}
         >
           <View style={styles.modalOverlay}>
-            <Surface style={styles.modalContainer}>
+            <View style={styles.modalContainer}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
                   {selectedVerse
@@ -497,12 +698,12 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 </View>
               ) : null}
-            </Surface>
+            </View>
           </View>
         </Modal>
 
-        {/* Prayer Times Modal */}
         {renderPrayerModal()}
+        {renderQiblaModal()}
       </View>
     </SafeAreaView>
   );
@@ -528,10 +729,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxl,
-    paddingTop: spacing.sm, // reduced because SafeAreaView adds top padding
+    paddingTop: spacing.sm,
   },
 
-  // Header
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -546,6 +746,7 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.sm,
   },
   headerLogoCircle: {
     width: 36,
@@ -569,12 +770,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
-  prayerButton: {
-    padding: 12, // even larger touch area
-    marginRight: spacing.xs,
+  headerIconButton: {
+    padding: 8,
   },
 
-  // Search Bar
   searchBar: {
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 24,
@@ -590,7 +789,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // Section titles
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -610,7 +808,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Loading / error
   loadingContainer: {
     paddingVertical: spacing.lg,
     alignItems: 'center',
@@ -621,7 +818,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
 
-  // Saved verses
   emptyCard: {
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 16,
@@ -681,7 +877,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
 
-  // FAB
   fab: {
     position: 'absolute',
     right: spacing.lg,
@@ -699,7 +894,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ----- Modals -----
+  // Shared modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -734,6 +929,11 @@ const styles = StyleSheet.create({
   modalCloseButton: {
     padding: 4,
   },
+  modalDivider: {
+    height: 1,
+    backgroundColor: 'rgba(212, 175, 55, 0.2)',
+    marginVertical: spacing.sm,
+  },
   modalLoading: {
     paddingVertical: spacing.lg,
     alignItems: 'center',
@@ -752,11 +952,6 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'System' : 'serif',
     lineHeight: 34,
     marginBottom: spacing.sm,
-  },
-  modalDivider: {
-    height: 1,
-    backgroundColor: 'rgba(212, 175, 55, 0.2)',
-    marginVertical: spacing.sm,
   },
   modalLabel: {
     fontSize: typography.fontSize.sm,
@@ -790,15 +985,8 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.md,
   },
 
-  // ----- Prayer Modal (Distinct colors) -----
-  prayerModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.lg,
-  },
-  prayerModalContainer: {
+  // Location modals (Prayer & Qibla) - unified styling
+  locationModalContainer: {
     borderRadius: 28,
     padding: spacing.lg,
     width: '100%',
@@ -812,26 +1000,19 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 12,
   },
-  prayerModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  prayerModalTitle: {
+  locationModalTitle: {
     fontSize: typography.fontSize.lg,
     fontWeight: '700',
     color: '#F5D76E',
   },
-  prayerModalClose: {
-    padding: 4,
-  },
-  prayerDate: {
+  locationDate: {
     color: '#A8D8EA',
     fontSize: typography.fontSize.md,
     textAlign: 'center',
     marginBottom: spacing.md,
   },
+
+  // Prayer specific
   prayerList: {
     marginTop: spacing.xs,
   },
@@ -884,5 +1065,164 @@ const styles = StyleSheet.create({
     color: '#0a1a1a',
     fontSize: 10,
     fontWeight: '700',
+  },
+
+  // Qibla specific
+  qiblaErrorContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+  },
+  qiblaErrorText: {
+    fontSize: 16,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  qiblaRetryButton: {
+    backgroundColor: '#D4AF37',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+  },
+  qiblaRetryText: {
+    color: '#0a1a1a',
+    fontWeight: '600',
+  },
+  qiblaLoadingContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+  },
+  qiblaLoadingText: {
+    marginTop: spacing.sm,
+    fontSize: 16,
+    color: '#B8D4D0',
+  },
+  qiblaContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+  },
+  compassWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: spacing.md,
+  },
+  compassCircle: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#2a3a3a',
+    borderWidth: 2,
+    borderColor: '#D4AF37',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  cardinal: {
+    position: 'absolute',
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#D4AF37',
+  },
+  tick: {
+    position: 'absolute',
+    borderRadius: 1,
+    backgroundColor: '#9CA3AF',
+    top: '50%',
+    left: '50%',
+    marginLeft: -1,
+    marginTop: -1,
+    transform: [{ translateY: -70 }],
+  },
+  forwardMarker: {
+    position: 'absolute',
+    top: -12,
+    left: '50%',
+    transform: [{ translateX: -10 }],
+    zIndex: 10,
+  },
+  needleContainer: {
+    position: 'absolute',
+    width: 60,
+    height: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    top: '50%',
+    left: '50%',
+    marginLeft: -30,
+    marginTop: -50,
+    zIndex: 5,
+  },
+  needle: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 60,
+    height: 100,
+  },
+  needleTip: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderLeftWidth: 12,
+    borderRightWidth: 12,
+    borderBottomWidth: 24,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#D4AF37',
+    transform: [{ rotate: '0deg' }],
+    marginBottom: -2,
+  },
+  needleShaft: {
+    width: 6,
+    height: 70,
+    backgroundColor: '#D4AF37',
+    borderRadius: 3,
+    marginTop: -2,
+  },
+  needleLabel: {
+    position: 'absolute',
+    bottom: -20,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#D4AF37',
+    backgroundColor: 'rgba(26,42,42,0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  kaabaIcon: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 25,
+    backgroundColor: 'rgba(26,42,42,0.9)',
+    zIndex: 6,
+  },
+  qiblaInfo: {
+    marginTop: spacing.md,
+    alignItems: 'center',
+    width: '100%',
+  },
+  qiblaBearingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#D4AF37',
+  },
+  qiblaHeadingText: {
+    fontSize: 16,
+    color: '#B8D4D0',
+    marginTop: 4,
+  },
+  qiblaHint: {
+    fontSize: 15,
+    color: '#B8D4D0',
+    marginTop: spacing.sm,
+    textAlign: 'center',
+    paddingHorizontal: spacing.md,
+    lineHeight: 22,
   },
 });
